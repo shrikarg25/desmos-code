@@ -1,12 +1,382 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Desmos Code</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DesmoScript V9.1 - JJK Hybrid Studio</title>
+    <script src="https://www.desmos.com/api/v1.9/calculator.js?apiKey=dcb31709b452b1cf9dc26972add0fda6"></script>
+    <style>
+        :root { --bg: #0f172a; --panel: #1e293b; --text: #f8fafc; --accent: #3b82f6; }
+        body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; margin: 0; background: var(--bg); color: var(--text); overflow: hidden; }
+        .header { display: flex; align-items: center; padding: 10px 20px; background: var(--panel); border-bottom: 2px solid #334155; gap: 15px; }
+        .header h2 { margin: 0; font-size: 18px; color: #10b981; }
+        button { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #2563eb; }
+        button.success { background: #10b981; } button.success:hover { background: #059669; }
+        button.danger { background: #ef4444; } button.danger:hover { background: #dc2626; }
+        .main-workspace { display: flex; flex: 1; overflow: hidden; }
+        .editor-panel { flex: 1; display: flex; flex-direction: column; border-right: 2px solid #334155; background: #020617; }
+        textarea#codeEditor { flex: 1; background: transparent; color: #a5b4fc; font-family: ui-monospace, monospace; font-size: 14px; padding: 15px; border: none; resize: none; outline: none; line-height: 1.5; tab-size: 4; }
+        .preview-panel { flex: 1; display: flex; flex-direction: column; position: relative; }
+        .board-wrapper { flex: 1; position: relative; background: white; border-bottom: 2px solid #334155; }
+        #calculator { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        .console-panel { height: 120px; padding: 15px; background: #020617; display: flex; flex-direction: column; gap: 10px; font-family: monospace; font-size: 12px; color: #f472b6; overflow-y: auto;}
+        
+        #ui-layer { position: absolute; bottom: 140px; left: 20px; right: 20px; display: flex; justify-content: space-between; pointer-events: none; z-index: 10; }
+        .hud-box { background: rgba(2, 6, 23, 0.85); padding: 10px 25px; border-radius: 8px; border: 3px solid #334155; box-shadow: 0 4px 10px rgba(0,0,0,0.5); text-align: center; }
+        .hud-box h3 { margin: 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+        .percent-text { font-size: 42px; font-weight: 900; color: #ffffff; text-shadow: 2px 2px 0 #000; transition: color 0.2s; }
+        #p1-box { border-color: #38bdf8; }
+        #p2-box { border-color: #ef4444; }
+    </style>
 </head>
 <body>
-  <h1>Desmos Code</h1>
-  <p>This is the new index.html file for the repository.</p>
+
+    <div class="header">
+        <h2>DesmoScript V9.1: Corrected Mirror Pipeline</h2>
+        <button class="success" onclick="Engine.compileAndPlay()">▶️ Compile & Play</button>
+        <button class="danger" onclick="Engine.stop()">⏹️ Stop</button>
+        <span id="status" style="margin-left: auto; font-family: monospace; color: #94a3b8;">Status: Stopped</span>
+    </div>
+
+    <div class="main-workspace">
+        <div class="editor-panel">
+            <textarea id="codeEditor" spellcheck="false"></textarea>
+        </div>
+        <div class="preview-panel">
+            <div class="board-wrapper" id="gameWindow">
+                <div id="calculator"></div>
+                <div id="ui-layer">
+                    <div class="hud-box" id="p1-box">
+                        <h3>Yuji (P1)</h3>
+                        <div id="player-percent" class="percent-text">0%</div>
+                    </div>
+                    <div class="hud-box" id="p2-box">
+                        <h3>Cursed Spirit</h3>
+                        <div id="dummy-percent" class="percent-text">0%</div>
+                    </div>
+                </div>
+            </div>
+            <div class="console-panel" id="consoleOut">System Console Ready...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. PLATFORM & INPUT SETUP ---
+        const calculator = Desmos.GraphingCalculator(document.getElementById('calculator'), { keypad: false, expressions: false, settingsMenu: false, lockViewport: true, zoomButtons: false });
+        calculator.setMathBounds({ left: -15, right: 15, bottom: -10, top: 10 });
+        const Input = { keys: { w: false, a: false, s: false, d: false, r: false, space: false, up: false, down: false, left: false, right: false } };
+        const keyMap = { ' ': 'space', 'arrowup': 'up', 'arrowdown': 'down', 'arrowleft': 'left', 'arrowright': 'right' };
+        window.addEventListener('keydown', (e) => { if (document.activeElement.tagName === 'TEXTAREA') return; let k = keyMap[e.key.toLowerCase()] || e.key.toLowerCase(); if (Input.keys.hasOwnProperty(k)) { Input.keys[k] = true; e.preventDefault(); } });
+        window.addEventListener('keyup', (e) => { let k = keyMap[e.key.toLowerCase()] || e.key.toLowerCase(); if (Input.keys.hasOwnProperty(k)) Input.keys[k] = false; });
+
+        // --- 2. HYBRID ANIMATOR CLASS ---
+        class Animator {
+            constructor(assets) { this.assets = assets; this.activeStates = {}; }
+            play(animName, weight = 1.0) { if (!this.activeStates[animName]) this.activeStates[animName] = { time: 0, weight: 0 }; this.activeStates[animName].weight = weight; }
+            stop(animName) { if (this.activeStates[animName]) this.activeStates[animName].weight = 0; }
+            getBlendedFrame(dt) {
+                if (this.assets.path) {
+                    if (!this.assets._parsed) this.assets._parsed = Engine.parseAndCenterSVG(this.assets.path);
+                    return { pts: this.assets._parsed, color: this.assets.color || "#ffffff", thickness: this.assets.thickness || 1.5 };
+                }
+                let totalWeight = 0; let validStates = [];
+                for (let name in this.activeStates) {
+                    let state = this.activeStates[name];
+                    if (state.weight > 0 && this.assets[name]) { state.time += dt; totalWeight += state.weight; validStates.push({ name, state }); }
+                }
+                if (validStates.length === 0) return this.extractFrameData(Object.keys(this.assets)[0], 0); 
+                validStates.forEach(s => s.normalizedWeight = s.state.weight / totalWeight);
+
+                let blendedPts = []; let finalThickness = 0;
+                let baseData = this.extractFrameData(validStates[0].name, validStates[0].state.time);
+                let vertexCount = baseData.pts.length; 
+                let finalColor = baseData.color; 
+                
+                for (let i = 0; i < vertexCount; i++) {
+                    let blendedX = 0; let blendedY = 0;
+                    validStates.forEach(v => {
+                        let frameData = this.extractFrameData(v.name, v.state.time);
+                        if (frameData.pts[i]) { blendedX += frameData.pts[i].x * v.normalizedWeight; blendedY += frameData.pts[i].y * v.normalizedWeight; }
+                    });
+                    blendedPts.push({ x: blendedX, y: blendedY });
+                }
+                validStates.forEach(v => finalThickness += this.extractFrameData(v.name, v.state.time).thickness * v.normalizedWeight);
+                return { pts: blendedPts, color: finalColor, thickness: finalThickness };
+            }
+            extractFrameData(animName, timeClock) {
+                let anim = this.assets[animName]; let frameIndex = Math.floor(timeClock * anim.fps) % anim.frames.length; let frame = anim.frames[frameIndex];
+                if (!frame._parsed) frame._parsed = Engine.parseAndCenterSVG(frame.path);
+                
+                // REDUCED GLOBAL THICKNESS FALLBACK: Enforce smaller stroke profile globally
+                let rawThick = frame.thickness || 3;
+                return { pts: frame._parsed, color: frame.color || "#ffffff", thickness: Math.max(1.2, rawThick * 0.4) };
+            }
+        }
+
+        // --- 3. CORE ENGINE ---
+        class Engine {
+            static blueprints = {}; static clones = []; static global = { time: 0 }; static cloneCounter = 0; static isRunning = false; static intervalId = null; static lastTime = 0;
+            static parseAndCenterSVG(pathStr) {
+                const svgContainer = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path'); pathEl.setAttribute('d', pathStr); svgContainer.appendChild(pathEl); document.body.appendChild(svgContainer);
+                const len = pathEl.getTotalLength(); let pts = [];
+                if (len === 0) pts = [{x:0, y:0}]; else {
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    for(let i=0; i<25; i++) {
+                        const p = pathEl.getPointAtLength((i/24)*len); const px = p.x / 10; const py = p.y / 10; pts.push({x: px, y: py});
+                        if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py;
+                    }
+                    const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2; pts = pts.map(p => ({ x: p.x - cx, y: p.y - cy }));
+                }
+                document.body.removeChild(svgContainer); return pts;
+            }
+            static defineObject(name, scripts) { Engine.blueprints[name] = { onStart: scripts.onStart || function(){}, onUpdate: scripts.onUpdate || function(){} }; }
+            static clone(name, x = 0, y = 0) {
+                if (!Engine.blueprints[name]) throw new Error(`Blueprint '${name}' missing.`);
+                const cId = Engine.cloneCounter++; const inst = { cId: cId, blueprintName: name, x: x, y: y, rotation: 0, scale: 1, flipX: 1, local: {}, _isDestroyed: false };
+                Engine.blueprints[name].onStart(inst); Engine.clones.push(inst); return inst;
+            }
+            static destroy(inst) { if(inst && !inst._isDestroyed) { inst._isDestroyed = true; calculator.removeExpressions([{id: `c_${inst.cId}_poly`}]); } }
+            static log(msg) { const con = document.getElementById('consoleOut'); const lines = con.innerText.split('\n'); if (lines.length > 50) lines.length = 50; con.innerText = `> ${msg}\n` + lines.join('\n'); }
+            static updateUI(id, text, color) { const el = document.getElementById(id); if (el) { el.innerText = text; el.style.color = color; } }
+            static getClones(name) { return Engine.clones.filter(c => c.blueprintName === name && !c._isDestroyed); }
+            static compileAndPlay() {
+                Engine.stop(); const code = document.getElementById('codeEditor').value; document.getElementById('consoleOut').innerText = "> Compiling V9.1 Engine...";
+                calculator.setBlank(); Engine.blueprints = {}; Engine.clones = []; Engine.global = { time: 0 }; Engine.cloneCounter = 0; Engine.lastTime = performance.now(); 
+                Engine.updateUI('player-percent', '0%', '#fff'); Engine.updateUI('dummy-percent', '0%', '#fff');
+                const api = { defineObject: Engine.defineObject, clone: Engine.clone, destroy: Engine.destroy, Animator: Animator, getClones: Engine.getClones, global: Engine.global, keys: Input.keys, Math: Math, console: { log: Engine.log }, updateUI: Engine.updateUI };
+                try { const sandboxFunc = new Function(...Object.keys(api), code); sandboxFunc(...Object.values(api)); Engine.isRunning = true; document.getElementById('status').innerText = "Status: PLAYING"; document.getElementById('status').style.color = "#10b981"; Engine.intervalId = setInterval(Engine.tick, 16); } 
+                catch (err) { Engine.log(`❌ ERROR:\n${err.message}`); }
+            }
+            static tick() {
+                if (!Engine.isRunning) return; const now = performance.now(); const dt = (now - Engine.lastTime) / 1000; Engine.lastTime = now; Engine.global.time += dt; let payloads = [];
+                for(let i = 0; i < Engine.clones.length; i++) {
+                    let inst = Engine.clones[i];
+                    if (!inst._isDestroyed) {
+                        try {
+                            Engine.blueprints[inst.blueprintName].onUpdate(inst, dt);
+                            if (inst.local.animator) {
+                                let renderData = inst.local.animator.getBlendedFrame(dt);
+                                let rad = inst.rotation * (Math.PI/180); let cosR = Math.cos(rad); let sinR = Math.sin(rad); let S = inst.scale; let fX = inst.flipX; 
+                                
+                                // FIXED RENDERING VECTOR: Applies flipX reflection properly across rotation targets without invert cascades
+                                let ptStr = renderData.pts.map(p => {
+                                    let rx = p.x * fX;
+                                    let ry = p.y; // Y remains unaltered, completely neutralizing upside-down mirroring bugs
+                                    let worldX = S * (rx * cosR - ry * sinR) + inst.x;
+                                    let worldY = S * (rx * sinR + ry * cosR) + inst.y;
+                                    return `(${worldX.toFixed(4)}, ${worldY.toFixed(4)})`;
+                                }).join(',');
+
+                                payloads.push({ id: `c_${inst.cId}_poly`, latex: `\\operatorname{polygon}([${ptStr}])`, color: renderData.color, lineWidth: renderData.thickness, lines: true, fillOpacity: 1.0 });
+                            }
+                        } catch(err) { Engine.stop(); Engine.log(`❌ EXCEPTION:\n${err.message}`); return; }
+                    }
+                }
+                Engine.clones = Engine.clones.filter(c => !c._isDestroyed); if(payloads.length > 0) calculator.setExpressions(payloads);
+            }
+            static stop() { Engine.isRunning = false; if(Engine.intervalId) clearInterval(Engine.intervalId); document.getElementById('status').innerText = "Status: Stopped"; document.getElementById('status').style.color = "#ef4444"; }
+        }
+
+        // --- 5. INITIAL SOURCE LOADING ---
+        function loadTemplate() {
+            const demoScript = `// --- 1. JJK V9.1 GEOMETRY ---
+const Assets = {
+    floor: { path: "M -25 -1 L 25 -1 L 25 1 L -25 1 Z", color: "#1e293b", thickness: 1 },
+    
+    jjkFighter: {
+        idle: {
+            fps: 6,
+            frames: [
+                { "path": "M 0.800 -8.000 L -4.400 64.800 Z M -4.400 64.800 L -17.200 82.800 Z M -17.200 82.800 L -16.800 99.600 Z M -2.800 64.000 L 2.800 82.000 Z M 2.800 82.000 L 2.400 99.600 Z M 0.800 -5.600 L -7.600 10.000 Z M -7.600 10.000 L 1.200 32.800 Z M 1.200 -4.670 L 5.600 15.730 Z M 5.600 16.000 L 18.800 34.000 Z", "color": "#38bdf8", "thickness": 4 },
+                { "path": "M 0.800 -5.200 L -2.400 71.200 Z M -2.400 70.800 L -16.000 82.400 Z M -16.000 82.400 L -11.200 99.200 Z M -1.200 70.400 L 7.600 85.200 Z M 7.600 85.200 L 8.000 99.600 Z M 0.800 -3.600 L 6.800 20.000 Z M 6.800 20.000 L 15.600 30.800 Z M 0.400 -3.200 L -12.000 8.000 Z M -12.000 8.000 L -4.800 28.000 Z", "color": "#38bdf8", "thickness": 4 },
+                { "path": "M 1.200 -3.200 L -6.000 68.800 Z M -6.000 68.800 L 2.000 86.800 Z M 2.000 86.800 L 4.400 99.600 Z M -6.800 69.600 L -13.600 89.200 Z M -13.600 89.200 L -13.600 99.200 Z M 2.000 -1.070 L 10.000 14.130 Z M 10.000 13.070 L 24.000 17.070 Z M 0.800 -1.330 L -14.000 12.270 Z M -13.600 12.930 L -11.600 29.730 Z", "color": "#38bdf8", "thickness": 4 }
+            ]
+        },
+        run: {
+            fps: 12,
+            frames: [
+                { "path": "M 0.400 73.330 L 1.600 -2.270 Z M 1.600 -2.270 L 8.800 14.130 Z M 8.800 14.130 L 28.400 14.930 Z M 1.600 -2.270 L -8.400 7.730 Z M -8.400 7.730 L 3.200 18.530 Z M 2.000 70.800 L -9.200 83.600 Z M -9.200 83.600 L -16.400 98.800 Z M 0.400 73.600 L 5.200 80.800 Z M 5.200 80.800 L 0.400 99.600 Z", "color": "#38bdf8", "thickness": 4 },
+                { "path": "M 0.400 -0.400 L 0.800 74.000 Z M 0.800 74.000 L -8.000 84.800 Z M -8.000 84.800 L -8.400 99.600 Z M 2.000 75.200 L 6.000 86.800 Z M 6.000 86.800 L 0.000 99.600 Z M 0.400 -0.800 L 8.800 12.800 Z M 8.800 12.800 L 32.800 16.000 Z M -2.000 2.000 L -8.800 8.800 Z M -8.800 8.800 L 3.200 18.400 Z", "color": "#38bdf8", "thickness": 4 },
+                { "path": "M -0.800 75.330 L -3.200 87.730 Z M -3.200 87.730 L 1.200 98.930 Z M 0.000 76.530 L 4.800 90.530 Z M 4.800 90.530 L 4.800 99.730 Z M -0.400 77.730 L 2.000 -0.270 Z M 2.800 2.930 L 7.200 21.730 Z M 7.200 21.730 L 27.600 12.530 Z M 3.200 -0.270 L -7.600 23.330 Z M -7.600 23.330 L 2.800 34.930 Z", "color": "#38bdf8", "thickness": 4 },
+                { "path": "M 0.270 76.400 L 1.070 4.000 Z M -0.130 76.400 L -1.730 85.600 Z M -1.730 85.600 L 8.670 99.600 Z M 0.670 77.600 L 4.270 82.800 Z M 4.270 82.800 L -3.330 97.600 Z M 0.670 2.400 L 6.270 22.800 Z M 6.270 22.800 L 28.670 12.000 Z M -0.930 3.600 L -6.930 22.400 Z M -6.930 22.400 L 4.670 34.800 Z", "color": "#38bdf8", "thickness": 4 },
+                { "path": "M 1.470 4.000 L -0.530 76.400 Z M -0.530 76.400 L 7.870 90.400 Z M 7.870 90.400 L 9.070 99.200 Z M -0.130 77.600 L -10.530 87.200 Z M -10.530 87.200 L -9.730 99.600 Z M 2.270 4.000 L 7.070 21.200 Z M 7.070 21.200 L 28.670 14.000 Z M 0.670 4.800 L -7.730 20.800 Z M -7.730 20.800 L 4.670 36.000 Z", "color": "#38bdf8", "thickness": 4 }
+            ]
+        },
+        divergentFist: {
+            fps: 15,
+            frames: [
+                { "path": "M 0.400 73.330 L 1.600 -2.270 Z M 1.600 -2.270 L 8.800 14.130 Z M 8.800 14.130 L 28.400 14.930 Z M 1.600 -2.270 L -8.400 7.730 Z M -8.400 7.730 L 3.200 18.530 Z M 2.000 70.800 L -9.200 83.600 Z M -9.200 83.600 L -16.400 98.800 Z M 0.400 73.600 L 5.200 80.800 Z M 5.200 80.800 L 0.400 99.600 Z", "color": "#a855f7", "thickness": 6 },
+                { "path": "M 0.400 -0.400 L 0.800 74.000 Z M 0.800 74.000 L -8.000 84.800 Z M -8.000 84.800 L -8.400 99.600 Z M 2.000 75.200 L 6.000 86.800 Z M 6.000 86.800 L 0.000 99.600 Z M 0.400 -0.800 L 8.800 12.800 Z M 8.800 12.800 L 32.800 16.000 Z M -2.000 2.000 L -8.800 8.800 Z M -8.800 8.800 L 3.200 18.400 Z", "color": "#a855f7", "thickness": 6 },
+                { "path": "M -0.800 75.330 L -3.200 87.730 Z M -3.200 87.730 L 1.200 98.930 Z M 0.000 76.530 L 4.800 90.530 Z M 4.800 90.530 L 4.800 99.730 Z M -0.400 77.730 L 2.000 -0.270 Z M 2.800 2.930 L 7.200 21.730 Z M 7.200 21.730 L 27.600 12.530 Z M 3.200 -0.270 L -7.600 23.330 Z M -7.600 23.330 L 2.800 34.930 Z", "color": "#a855f7", "thickness": 6 },
+                { "path": "M 0.270 76.400 L 1.070 4.000 Z M -0.130 76.400 L -1.730 85.600 Z M -1.730 85.600 L 8.670 99.600 Z M 0.670 77.600 L 4.270 82.800 Z M 4.270 82.800 L -3.330 97.600 Z M 0.670 2.400 L 6.270 22.800 Z M 6.270 22.800 L 28.670 12.000 Z M -0.930 3.600 L -6.930 22.400 Z M -6.930 22.400 L 4.670 34.800 Z", "color": "#a855f7", "thickness": 6 },
+                { "path": "M 1.470 4.000 L -0.530 76.400 Z M -0.530 76.400 L 7.870 90.400 Z M 7.870 90.400 L 9.070 99.200 Z M -0.130 77.600 L -10.530 87.200 Z M -10.530 87.200 L -9.730 99.600 Z M 2.270 4.000 L 7.070 21.200 Z M 7.070 21.200 L 28.670 14.000 Z M 0.670 4.800 L -7.730 20.800 Z M -7.730 20.800 L 4.670 36.000 Z", "color": "#a855f7", "thickness": 6 }
+            ]
+        },
+        upVariant: {
+            fps: 18,
+            frames: [
+                { "path": "M 0.400 73.330 L 1.600 -2.270 Z M 1.600 -2.270 L 8.800 14.130 Z M 8.800 14.130 L 28.400 14.930 Z M 1.600 -2.270 L -8.400 7.730 Z M -8.400 7.730 L 3.200 18.530 Z M 2.000 70.800 L -9.200 83.600 Z M -9.200 83.600 L -16.400 98.800 Z M 0.400 73.600 L 5.200 80.800 Z M 5.200 80.800 L 0.400 99.600 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 1.330 72.000 L 0.930 -0.800 Z M 0.930 -0.800 L 5.730 17.600 Z M 5.730 17.600 L 10.930 12.800 Z M 0.930 0.800 L -10.270 12.800 Z M -10.270 12.800 L -3.470 28.800 Z M 1.730 72.000 L -6.270 82.400 Z M -7.070 83.200 L -11.870 98.800 Z M 2.530 72.800 L 5.730 82.400 Z M 5.730 82.400 L 4.930 99.600 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 1.330 0.000 L 0.930 79.200 Z M 0.930 79.200 L -9.070 89.600 Z M -9.070 89.600 L -11.070 98.400 Z M 0.130 80.400 L 4.530 92.400 Z M 4.530 92.400 L 4.130 99.200 Z M 2.130 4.000 L 4.130 26.800 Z M 4.130 26.400 L 10.530 14.000 Z M 0.130 1.200 L -10.270 5.600 Z M -10.270 6.000 L -4.270 20.800 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M -1.470 88.800 L 0.930 -0.800 Z M -1.470 86.400 L -9.470 91.200 Z M -9.470 91.200 L -17.070 98.400 Z M -2.270 88.400 L 8.530 94.000 Z M 8.530 94.000 L 4.930 99.600 Z M 1.730 1.200 L 3.730 37.200 Z M 3.730 37.200 L 9.330 18.400 Z M -0.270 -2.000 L -11.870 6.800 Z M -11.470 6.800 L -6.270 22.400 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 0.130 88.800 L 1.330 -9.600 Z M 0.130 87.200 L -6.270 92.000 Z M -6.270 92.000 L -10.670 96.000 Z M 0.930 88.400 L 5.730 92.800 Z M 5.730 92.800 L 2.530 96.800 Z M 2.130 -5.200 L 8.130 10.000 Z M 8.130 10.000 L 18.930 -10.400 Z M 0.930 -8.400 L -14.270 -1.600 Z M -14.270 -1.600 L -9.470 19.600 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 0.930 78.400 L 4.130 -10.800 Z M 4.130 -7.600 L -19.870 6.800 Z M -19.070 6.400 L -11.070 28.800 Z M 1.730 77.200 L -7.070 84.800 Z M -7.070 84.800 L -9.470 92.400 Z M 1.730 77.200 L 2.930 87.200 Z M 2.930 87.200 L -1.070 94.400 Z M 4.840 -8.090 L 9.240 -0.090 Z M 9.240 0.310 L 32.440 -34.890 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 0.930 78.400 L 4.130 -10.800 Z M 4.130 -10.800 L 12.930 -1.200 Z M 12.930 -1.200 L 24.130 -44.000 Z M 4.930 -8.000 L -19.070 6.400 Z M -19.070 6.400 L -11.070 28.800 Z M 1.730 77.200 L -7.070 84.800 Z M -7.070 84.800 L -9.470 92.400 Z M 1.730 77.200 L 2.930 87.200 Z M 2.930 87.200 L -1.070 94.400 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 0.930 78.400 L 4.130 -10.800 Z M 4.530 -5.600 L -19.470 8.800 Z M -19.070 9.600 L -11.070 32.000 Z M 1.730 77.200 L -7.070 84.800 Z M -7.070 84.800 L -9.470 92.400 Z M 1.730 77.200 L 2.930 87.200 Z M 2.930 87.200 L -1.070 94.400 Z M 5.640 -5.020 L 33.240 -34.220 Z M 33.240 -34.220 L 40.840 -58.620 Z", "color": "#facc15", "thickness": 6 },
+                { "path": "M 0.930 78.400 L 4.130 -10.800 Z M 4.530 -5.600 L -19.470 8.800 Z M -19.070 9.600 L -11.070 32.000 Z M 1.730 77.200 L -7.070 84.800 Z M -7.070 84.800 L -9.470 92.400 Z M 1.730 77.200 L 2.930 87.200 Z M 2.930 87.200 L -1.070 94.400 Z M 3.640 -7.420 L 32.440 -27.820 Z M 32.440 -27.820 L 42.440 -44.620 Z", "color": "#facc15", "thickness": 6 }
+            ]
+        }
+    },
+    
+    cursedSpirit: {
+        idle: { fps: 2, frames: [
+            { path: "M 0 4 L 0 0 M 0 0 L -2 -3 M 0 0 L 2 -3 M 0 2 L -2 1 M 0 2 L 2 1", color: "#ef4444", thickness: 5 },
+            { path: "M 0 4 L 0 0 M 0 0 L -2 -3 M 0 0 L 2 -3 M 0 2 L -2 2 M 0 2 L 2 2", color: "#ef4444", thickness: 5 }
+        ]},
+        hitstun: { fps: 1, frames: [{ path: "M -2 4 L -1 0 M -1 0 L -4 -2 M -1 0 L 2 -1 M -1 2 L -3 0 M -1 2 L 3 3", color: "#facc15", thickness: 5 }] }
+    }
+};
+
+defineObject("Stage", {
+    onStart: (self) => { self.local.animator = new Animator(Assets.floor); self.y = -6; }
+});
+
+defineObject("Dummy", {
+    onStart: (self) => {
+        self.scale = 0.6; self.x = 5; self.y = 0;
+        self.local.animator = new Animator(Assets.cursedSpirit);
+        self.local.vx = 0; self.local.vy = 0;
+        self.local.isGrounded = false;
+        self.local.percent = 0;      
+        self.local.hitstunTimer = 0; 
+    },
+    onUpdate: (self, dt) => {
+        self.local.animator.stop("idle"); self.local.animator.stop("hitstun");
+
+        if (!self.local.isGrounded) self.local.vy -= 40 * dt;
+        self.local.vx *= Math.pow(0.05, dt); 
+
+        self.x += self.local.vx * dt;
+        self.y += self.local.vy * dt;
+
+        if (self.y <= -5 && self.x >= -12 && self.x <= 12) {
+            if (self.local.vy < -15) {
+                self.local.vy = Math.abs(self.local.vy) * 0.7; 
+                self.y = -4.9; 
+            } else if (self.local.vy <= 0) {
+                self.y = -5; self.local.vy = 0; self.local.isGrounded = true;
+            }
+        }
+
+        if (self.local.hitstunTimer > 0) {
+            self.local.hitstunTimer -= dt;
+            self.local.animator.play("hitstun", 1.0); 
+        } else {
+            self.local.animator.play("idle", 1.0);
+        }
+
+        let color = self.local.percent > 100 ? "#ef4444" : (self.local.percent > 50 ? "#facc15" : "#ffffff");
+        updateUI('dummy-percent', Math.floor(self.local.percent) + "%", color);
+
+        if (self.y < -15 || Math.abs(self.x) > 20) {
+            console.log("💥 EXORCISED! Dummy reset.");
+            self.x = 5; self.y = 5; self.local.vx = 0; self.local.vy = 0;
+            self.local.percent = 0; 
+        }
+    }
+});
+
+defineObject("Player", {
+    onStart: (self) => {
+        self.scale = 0.05; self.x = -5; self.y = 0; 
+        self.local.animator = new Animator(Assets.jjkFighter);
+        self.local.vx = 0; self.local.vy = 0;
+        self.local.isGrounded = false;
+        self.local.facingRight = true;
+        self.local.attackCooldown = 0;
+        self.local.currentAttack = ""; 
+    },
+    onUpdate: (self, dt) => {
+        self.local.animator.stop("idle"); self.local.animator.stop("run"); 
+        self.local.animator.stop("divergentFist"); self.local.animator.stop("upVariant");
+
+        let enemies = getClones("Dummy");
+        if (enemies.length > 0) {
+            let enemy = enemies[0];
+            self.local.facingRight = (enemy.x > self.x);
+            // FIXED MOONWALK ALIGNMENT: 1 means forward, -1 means mirrored facing left.
+            self.flipX = self.local.facingRight ? 1 : -1;
+        }
+
+        let moving = false;
+        if (keys.d || keys.right) { self.local.vx = 12; moving = true; } 
+        else if (keys.a || keys.left) { self.local.vx = -12; moving = true; } 
+        else { self.local.vx *= Math.pow(0.01, dt); }
+
+        if (!self.local.isGrounded) self.local.vy -= 50 * dt;
+        if ((keys.w || keys.up) && self.local.isGrounded) { self.local.vy = 22; self.local.isGrounded = false; }
+
+        self.x += self.local.vx * dt; self.y += self.local.vy * dt;
+        if (self.y <= -5 && self.x >= -12 && self.x <= 12 && self.local.vy <= 0) { self.y = -5; self.local.vy = 0; self.local.isGrounded = true; }
+
+        if (moving) self.local.animator.play("run", 1.0); else self.local.animator.play("idle", 1.0);
+
+        if (self.local.attackCooldown > 0) {
+            self.local.attackCooldown -= dt;
+            if (self.local.currentAttack === "upVariant") {
+                self.local.animator.play("upVariant", 1.5);
+            } else if (self.local.currentAttack === "aerialSlam") {
+                self.local.animator.play("upVariant", 1.5); 
+            } else {
+                self.local.animator.play("divergentFist", 1.5);
+            }
+        } 
+        else if (keys.space) {
+            self.local.attackCooldown = 0.5;
+            let isAerial = !self.local.isGrounded;
+            let isUp = (keys.w || keys.up);
+            
+            if (isUp && !isAerial) self.local.currentAttack = "upVariant";
+            else if (isAerial) self.local.currentAttack = "aerialSlam"; 
+            else self.local.currentAttack = "divergentFist";
+
+            for (let i = 0; i < enemies.length; i++) {
+                let enemy = enemies[i];
+                let dx = enemy.x - self.x;
+                let dy = enemy.y - self.y;
+                let distance = Math.hypot(dx, dy);
+                let inFront = (self.local.facingRight && dx > 0) || (!self.local.facingRight && dx < 0);
+
+                if (distance < 5.0 && inFront) {
+                    enemy.local.percent += 15;
+                    let knockbackPower = 10 + (enemy.local.percent * 0.3);
+                    
+                    if (self.local.currentAttack === "aerialSlam") {
+                        enemy.local.vx = self.local.facingRight ? 5 : -5;
+                        enemy.local.vy = -knockbackPower * 1.5; 
+                    } else if (self.local.currentAttack === "upVariant") {
+                        enemy.local.vx = self.local.facingRight ? 2 : -2;
+                        enemy.local.vy = knockbackPower * 1.2; 
+                    } else {
+                        enemy.local.vx = self.local.facingRight ? knockbackPower : -knockbackPower;
+                        enemy.local.vy = knockbackPower * 0.8;
+                    }
+                    enemy.local.isGrounded = false; 
+                    enemy.local.hitstunTimer = 0.5;
+                }
+            }
+        }
+    }
+});
+
+clone("Stage", 0, -6);
+clone("Dummy", 5, 0);
+clone("Player", -5, 0);`;
+
+            document.getElementById('codeEditor').value = demoScript;
+        }
+        loadTemplate();
+    </script>
 </body>
 </html>
